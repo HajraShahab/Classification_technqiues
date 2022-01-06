@@ -1,0 +1,488 @@
+---
+title: "Homework 4"
+author: "Hajra Shahab"
+output:
+  html_document:
+    highlight: pygments
+    theme: lumen
+    toc: yes
+    toc_depth: 3
+  word_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+### Preamble: 
+
+##### Loading packages and data
+
+```{r, message=FALSE}
+library(knitr)
+library(klaR)
+library(MASS)
+library(plyr)
+library(ggplot2)
+library(partykit)
+library(rpart)
+library(pROC)
+library(sensemakr)
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+options(scipen = 4)
+
+```
+
+##### As always:
+
+1. Rename the file downloaded from Canvas as `Homework4_YourName.Rmd`.
+
+2. Replace the "Your Name Here" text in the `author:` field of this Rmd file with your own name.
+
+
+### Problem 1: Instability of Logistic regression
+
+> This question walks you through a simple example that illustrates the instability of logistic regression coefficient estimates in cases where the classes are **clearly separable**.  This instability can arise in practice when we have inputs $X$ that are categorical variables with a large number of levels.  In such cases, particularly when we have low cell counts, it is not uncommon for all observed outcomes in a particular category to be either all $0$ or all $1$.  This leads the coefficient corresponding to that category to be very unstable.
+
+##### **(a)** Load the `age.data` below, which contains simulated age information on 3000 individuals.  We want to use the `age` variable to try to classify individuals as adults or non-adults.  The outcome variable `is.adult` is 1 for adults and 0 for non-adults.  
+
+```{r}
+age.data <- read.csv("agedata.csv")
+```
+
+##### Use `geom_histogram()` to construct a conditional probability plot to show how the probability of being an adult varies with age. You may check out the `geom_histogram(position = "fill")` example (at this link)[https://ggplot2-book.org/statistical-summaries.html]. Note that `fill` needs to take a factor variable, so you will need to convert the numeric `is.adult` to a factor *just for the purpose of this plot* (do not overwrite the original `is.adult` data).
+
+```{r}
+
+ggplot(age.data, aes(x = age, fill = as.factor(is.adult))) + geom_histogram(position = "fill")
+
+```
+
+##### **(b)** Is this a difficult classification problem?  Can you think of a simple rule that gives 100\% classification accuracy for this task? (Hint: It may be helpful to open the raw data file `agedata.csv` in a spreadsheet and visually inspect it. Sort the records by `age`. How does `is.adult` change with `age`?)
+
+
+This does not seem to be a difficult classification as the data clearly changes as we hit '18'. This means that there wont be any prediction errors. 
+
+
+##### Use your simple rule to try and classify (i.e. generate predicted values of `is.adult`) the observations in data as adults (predict 1) or non-adults (predict 0). Compute the error rate of your prediction.  
+
+```{r}
+
+c.matrix <- rep(0, length(age.data$is.adult))
+c.matrix[age.data$age >= 18] = 1
+observed <- age.data$is.adult
+table(c.matrix, observed)
+
+test.error <- mean(observed != age.data$is.adult)
+test.error 
+
+```
+
+
+##### **(c)** Fit a logistic regression to the data. Use the `kable()` command to print out a nice summary of your coefficients estimate table.  Is the coefficient of `age` statistically significant? Does the result suggest whether age matters in predicting adult/non-adult or not?
+
+**Note:** You may encounter some warning messages when you fit the logistic regression, which is fine. In fact, these warnings are indicative of the exact problem with the data we are trying to demonstrate.
+
+
+```{r}
+
+glm.reg <- glm(is.adult ~ ., data = age.data, family = binomial)
+glm.reg
+```
+
+```{r}
+kable(summary(glm.reg)$coef)
+```
+
+Age coefficient is not statistically significant because the p-value is greater than 0.05.
+
+
+##### **(d)** Retrieve the fitted probabilities from the glm object you obtained above. Using a probability cutoff of 0.5, classify the observations into 0 or 1. Compute the error rate of your logistic regression classifier.  Does the logistic regression classifier do a good job of classifying individuals as adult vs non-adult? Does this result suggest whether age matters in predicting adult/non-adult or not?
+
+```{r}
+val.fitted <- glm.reg$fitted.values
+glm.fitted <- rep(0, length(age.data$is.adult))
+glm.fitted[val.fitted > 0.5] = 1
+table(glm.fitted, age.data$is.adult)c
+```
+
+```{r}
+test.error.fitted <- mean(glm.fitted != age.data$is.adult)
+test.error.fitted 
+```
+
+As we achieve a test error rate of 0, we see a perfect accuracy hence it is safe to conclude that logistic regression classifier does a good job of classifying individuals as adult vs non-adult. It does suggest that age matters in predicting adult/non-adult. 
+
+
+##### **(e)** Use `qplot(x = ...)` to construct a histogram of the predicted **probabilities** (not the predicted binary outcomes) from your logistic regression.  Describe what you see. 
+
+```{r}
+qplot(data = age.data, x = val.fitted)
+```
+
+
+We see a binary setup as the variables only take the value of 0 or 1. Hence, we see histogram with two bars only with a corresponding value of 354 for 0 and 2646 for 1. 
+
+
+##### **(f)** (Not graded - just for fun) Obviously logistic regression is not a good choice of model in this specific context. Can you think of another classification model we covered in class that would be suitable in this context to discover the underlying simple rule you identified in Part (b)? 
+
+Your response here:
+
+
+
+
+### Problem 2: Linear Discriminant Analysis, Quadratic Discriminant Analysis, Naive Bayes
+
+> This problem introduces you to the `klaR` library, which provides a set of useful model fitting and visualization tools. You will also use some fitting functions from the `MASS` library.
+
+> You may find the tutorial at [this link](http://www.statmethods.net/advstats/discriminant.html) helpful for solving this problem. Also review the code samples in ISLR &sect;4.6.3 and &sect;4.6.4.
+
+> We're going to use Fisher's famous `iris` data set for this problem.  This data set comes pre-loaded with R.  You can learn more about it by looking at the helpfile `?iris`. The `iris` dataset even has its [Wikipedia page](https://en.wikipedia.org/wiki/Iris_flower_data_set). It's fair to say that everyone who has ever learned Data Mining in R has encountered the iris data at one point or another
+
+##### **(a)** Use the `lda` function from the `MASS` library to build an LDA classifier predicting `Species` from the 4 measurements in the `iris` data. Call this fit `iris.lda`. 
+
+**Note:** In general, you should split the data in to training and test sets and/or apply cross validation in order to evaluate the model performance. However, the main focus of Problem 2 is to demonstrate the `lda()`, `qda()`, and `NaiveBayes()` functions in R. So in order to make things simple, let's use the entire `iris` dataset as our training data throughout Problem 2. 
+
+```{r}
+data("iris")
+iris.lda <- lda (Species ~ ., data = iris)
+
+```
+
+##### Explore the `iris.lda` object to show the following:  What are the group means and prior probabilities for each class?  
+
+```{r}
+
+iris.lda
+
+```
+
+##### Run the `plot()` command on your `iris.lda` object.  This produces what is called a discriminant plot.  When we have $K$ possible classes, we get $K-1$ so-called linear discriminants.  You should think of these as "derived features" that provide a helpful low-dimensional representation of the data.  The more spread out the classes appear in these discriminant plots, the better the LDA method performs (and vice versa).  You may supply the argument `col = as.numeric(iris$Species)` to colour the points based on the true class label.
+
+```{r}
+
+plot(iris.lda, col = as.numeric(iris$Species))
+
+```
+
+#####  **(b)** Use the `predict` function to obtain the predicted **classes**. Then use `table()` to produce the 3x3 confusion matrix for the lda classifier. Use the appropriate entries in the confusion matrix to compute the overall misclassification rate. What is the overall misclassification rate of the LDA classifier?  Does LDA perform well on this problem?
+
+```{r}
+
+predicted_class <- predict(iris.lda, data = iris)
+
+confusion.pred <- table(iris$Species, predicted_class$class)
+confusion.pred
+```
+
+```{r}
+#misclassification rate 
+1 - sum(diag(confusion.pred)) / sum(confusion.pred)
+```
+
+- The overall misclassification rate is 0.02. Since the misclassification rate is low, we can conclude that LDA does perform well on this problem. 
+
+##### Again using the `predict()` function:  What are the estimated posterior class probabilities for the 120th observation?  You should use `round()` (with the appropriate `digits`) or `zapsmall()` to convert the posterior probability values in scientific notations into decimal forms.
+
+```{r}
+
+lda.pred <- predict(iris.lda , iris)
+round(lda.pred$posterior, digits = 4)
+
+```
+
+- Setosa = 0
+- Versicolor = 0.2208
+- Viginica = 0.7792
+
+
+##### **(c)** Use the `partimat()` function from the `klaR` package with `method = "lda"` to get bivariate plots showing the LDA decision boundaries.  Misclassifications are indicated by red text. How many plots does `partimat()` generate? Why?
+
+```{r, cache = TRUE, fig.width = 10, fig.height = 6}
+
+partimat(Species ~ ., data = iris, method = "lda")
+
+```
+
+Partimat() generates six plots as bivariate plots depict relationships between two variables and we see the following relationships.We see six different relationships for 4 variables. 
+1. `Sepal.Length` and `Sepal.Width`
+2. `Sepal.Length` and `Petal.Length`
+3. `Sepal.Width` and `Petal.Length`
+4. `Sepal.Length` and `Petal.Width`
+5. `Sepal.Width` and `Petal.Width` 
+6. `Petal.Length` and `Petal.Width` 
+
+
+##### Two of the classes begin with the letter "v", which makes the above plot hard to interpret.  The following code produces a new data frame, where the Species column has been transformed according to: `S = setosa`, `C = versicolor`, `N = virginica`.  
+
+```{r}
+iris2 <- transform(iris, Species = mapvalues(Species, c("setosa", "versicolor", "virginica"),
+                                             c("S", "C", "N")))
+```
+
+##### Try constructing the plot again with the `iris2` data frame.  Do all 2-variable combinations of the inputs do an equally good job of separating the three classes?  
+
+```{r, cache = TRUE, fig.width = 10, fig.height = 6}
+
+partimat(Species ~ ., data = iris2, method = "lda")
+```
+
+- Plot "Sepal.Length and Petal.Length" and "Sepal.Width and Petal.Width" do a good job of separating the three classes. 
+
+
+##### **(d)** Use the `qda` function from the `MASS` library to build an QDA classifier predicting `Species` from the 4 measurements in the `iris` data. Call this fit `iris.qda`. Produce the 3x3 confusion matrix for the qda classifier and compute the overall misclassification rate. How does QDA perform compared to LDA?
+
+
+```{r}
+
+data("iris")
+iris.qda <- qda (Species ~ ., data = iris)
+iris.qda
+
+#3x3 confusion matrix
+predicted_class <- predict(iris.qda, data = iris)
+
+confusion.pred2 <- table(iris$Species, predicted_class$class)
+confusion.pred2
+
+#misclassification rate 
+1 - sum(diag(confusion.pred2)) / sum(confusion.pred2)
+```
+
+QDA performs equally good as LDA. 
+
+
+
+##### **(e)**  Using the `iris2` data frame, run the `partimat` command again, this time with `method = "qda"`. Compare the plots with the ones in Part (c). Does it look like allowing quadratic boundaries does a better job separating the three classes?  
+
+```{r, cache = TRUE, fig.width = 10, fig.height = 6}
+
+partimat(Species ~ ., data = iris2, method = "qda")
+
+```
+
+We dont really see a change here. The QDA seems to do a similar does as LDA while separating the three classes. 
+
+
+##### **(f)** Use the `NaiveBayes()` command from the `klaR` library (see [documentation](https://www.rdocumentation.org/packages/klaR/versions/0.6-15/topics/NaiveBayes) for syntax) to fit a Naive Bayes classifier to the `iris` data. Set `usekernel = TRUE` (see [this blogpost](https://www.datasciencecentral.com/profiles/blogs/naiv-bayes-classifier-using-kernel-density-estimation-with) for the rationale behind this setting).  Save your output as `iris.nb`.  Produce a confusion matrix for the Naive Bayes classifier.   What is the misclassification rate of Naive Bayes on this problem?  How does the performance of Naive Bayes compare to that of LDA/QDA in this example?
+
+```{r}
+
+iris.nb <- NaiveBayes(Species ~ ., data = iris, usekernel = TRUE)
+
+#3x3 confusion matrix
+predicted_class <- predict(iris.nb, data = iris)
+
+confusion.pred3 <- table(iris$Species, predicted_class$class)
+confusion.pred3
+
+#misclassification rate 
+1 - sum(diag(confusion.pred3)) / sum(confusion.pred3)
+
+```
+
+Misclassification rate = 0.04. Naives Bayes doesnt perform as good as LDA/QDA and this can be seen from the misclassification rate as it is higher than that of LDA/QDA. 
+
+
+
+##### **(g)**  What is the true class of the 120th observation in the `iris` data frame? What are the estimated **posterior probabilities** for the 120th observation according to Naive Bayes?  Are they similar to those estimated by LDA?  Do LDA and Naive Bayes result in the same classification for this observation?  Does either method classify this observation correctly?
+
+```{r}
+
+iris.nb.pred <- predict(iris.nb , iris)
+round(iris.nb.pred$posterior, digits = 4)
+
+```
+
+
+- Posterior probabilities: 
+Setosa, `0`, Versicolor = `0.9462`, Viginica = `0.0538`. For Setosa, the probability is the same but the probabilies differ for Versicolor and Viginica. LDA and Naive Bayes result in the same classification for this observation. 
+
+
+
+### Problem 3: Decision trees, with nicer plots
+
+> This problem introduces you to the `partykit` and `rattle` packages, which allow you to create much nicer decision tree plots.
+
+> We'll need to construct `rpart` objects instead of `tree` objects in order to use the more advanced plotting routines.  The syntax for `rpart` is similar to that of `tree`.  For additional details, you may refer to [the following link](http://www.statmethods.net/advstats/cart.html).
+
+> This data comes from a Portuguese banking institution that ran a marketing campaign to try to get clients to subscribe to a "term deposit"" (a CD). A CD is an account that you can put money into that guarantees fixed interest rate over a certain period of time (e.g., 2 years). The catch is that if you try to withdraw your money before the term ends, you will typically incur heavy penalties or "early withdrawal fees".  The outcome variable in the data set is `y`, denoting whether the customer opened up a CD or not. See [here](https://archive.ics.uci.edu/ml/datasets/bank+marketing) to find out more about the dataset. 
+
+> Suppose that you’re hired as a decision support analyst at this bank and your first job is to use the data to figure out who the marketing team should contact for their next CD  marketing campaign. i.e., they pull up new spreadsheet that contains the contact information, age, job, marital status, education level, default history, mortgage status, and personal loan status for tens of thousands of clients, and they want you to tell them who they should contact.
+
+
+##### **Preamble:** Run the code chunk below to load the data file `bank-full.csv` and call it `marketing`. After we load the original data, we oversample the observations with outcome "yes" in order to artifically overcome the problem with sample imbalance. Check out [this article](https://towardsdatascience.com/how-to-deal-with-imbalanced-data-34ab7db9b100) for some of the common techniques to deal with imbalanced data. What we are doing here is oversampling (upsampling) the minority class. Lastly, we split the `marketing` data into `marketing.train` and `marketing.test`.  All model fitting should be done on `marketing.train`. 
+
+```{r, cache = TRUE}
+# Read in the marketing data
+marketing <- read.csv("bank-full.csv")
+
+set.seed(981)
+
+# Upsample the data to artifically overcome sample imbalance
+marketing.more.idx <- sample(which(marketing$y == "yes"), 15000, replace = TRUE)
+marketing.upsample <- rbind(marketing,
+                            marketing[marketing.more.idx, ])
+
+# Trim job strings to 5 characters
+# marketing.upsample <- transform(marketing.upsample, job = strtrim(job, 5))
+
+# Randomly select 20% of the data to be held out for model validation
+test.indexes <- sample(1:nrow(marketing.upsample), 
+                       round(0.2 * nrow(marketing.upsample)))
+train.indexes <- setdiff(1:nrow(marketing.upsample), test.indexes)
+
+# Just pull the covariates available to marketers (cols 1:8) and the outcome (col 17)
+marketing.train <- marketing.upsample[train.indexes, c(1:8, 17)]
+marketing.test <- marketing.upsample[test.indexes, c(1:8, 17)]
+
+```
+
+
+##### **(a)** Fit a decision tree to the data using the `rpart()` function.  Call this tree `marketing.tree`.  The syntax is exactly the same as for the `tree` function you saw on Lab 4.  Use the `plot` and `text` functions to visualize the tree.  Show a text print-out of the tree.  Which variables get used in fitting the tree?
+
+```{r, fig.height = 7}
+
+
+marketing.tree <- rpart(y ~ ., marketing.train, method = "class")
+
+#plotting with text labels
+plot(marketing.tree)
+text(marketing.tree, pretty = 0)
+
+```
+
+
+Housing, Balance and Age 
+
+
+
+##### **(b)** The `as.party` command converts the `rpart` tree you fit in part (a) to a `party` object that has a much better plot function.  Run `plot` on the object created below.  Also run the `print` function. 
+
+##### In the plot, you'll see a node labeled Node 8.  How many observations fall into this leaf node?  What does the shaded bar shown below this Node mean? Do observations falling into this node get classified as `"yes"` or `"no"`?
+
+```{r, fig.height = 7, fig.width = 9}
+# uncomment the line below
+marketing.party <- as.party(marketing.tree)
+
+# plot() and then print() the marketing.party object
+plot(marketing.party)
+
+print(marketing.party)
+
+```
+
+
+- There are 2,682 observations in Node 8. It shows that 65% of the observations are classified as 'yes' and 35% are classified as 'no'. 
+
+- The dark region = yes and the grey region = no. This shows that observations falling into this node get classified as `"yes"` or `"no"`. 
+
+
+##### **(c)**  We got a pretty shallow tree in part (a).  Here we'll practice growing larger (deeper) trees, and pruning them back.  The code below grows a tree to a complexity parameter value of `cp = 0.002`, while ensuring that no single node contains fewer than `minsplit = 100` observations.    
+
+##### Run the `plotcp` command on this tree to get a plot of the Cross-validated error.  Also look at the `cptable` attribute of `marketing.full`.   
+
+```{r}
+marketing.full <- rpart(y ~ ., data = marketing.train, 
+                        control = rpart.control(minsplit=100, cp=0.002))
+
+# Run the `plotcp` command on this tree. Also look at the `cptable` attribute of `marketing.full`
+
+plotcp(marketing.full)
+marketing.full$cptable
+```
+
+
+
+##### **(d)** The `xstd` in the `cptable` is the standard error of the CV Error. The horizontal dotted line is 1 standard error above the minimum CV Error (i.e. sum of the lowest CV error and its 1-SE).  Apply the 1-SE rule to determine which value of `cp` to use for pruning.  Print this value of `cp`.   
+
+**Hint:** Recall that the idea behind 1-SE rule is to choose the simplest model whose CV error does not exceed the upper bound (one standard error above the lowest CV error). The question asks you to find the optimum `cp` value whose CV error falls just below the horizontal line.
+
+
+```{r}
+min.idx <- which.min(marketing.full$cptable[, 4])
+stderr.idx <- which.max(marketing.full$cptable[, 4] <
+                           (min(marketing.full$cptable[, 4]) +
+                              marketing.full$cptable[min.idx, 5]))
+
+
+stderr.cp <- round(marketing.full$cptable[stderr.idx, 1], 3)
+print(stderr.cp)
+
+```
+
+
+
+##### **(e)** Use the `prune` command (`prune(rpart.fit, cp = )`) to prune `marketing.full` to the level of complexity you settled on in part (d).  Call your pruned tree `marketing.pruned`.  Display a text print-out of your tree.  
+
+```{r}
+
+#marketing tree full pruned to a specified level of complexity 
+marketing.pruned <- prune(marketing.full, cp = stderr.cp)
+print (marketing.pruned)
+
+#plotting the tree with text labels
+plot(marketing.pruned)
+text(marketing.pruned, pretty = 0)
+
+```
+
+
+
+> The questions below all refer to `marketing.pruned`.  
+
+##### **(f)** The code below converts your `marketing.pruned` tree into a `party` object and then plots the results.   Notice the use of `gpar` to set the `fontsize` for the plot.  
+
+##### Which Node has the highest proportion of individuals who were observed to open a CD?  How many individuals are in this node?  Describe the characteristics of these individuals.
+
+```{r, fig.width = 16, fig.height = 10}
+# Uncomment the code below to see plots
+marketing.pruned.party <- as.party(marketing.pruned)
+plot(marketing.pruned.party, gp = gpar(fontsize = 10))
+```
+
+- Node 4 has the highest proportion of individuals who were observed to open a CD i.e. 78%. There are 168 individuals in this node. These individuals have taken a housing loan and are >= 60.5 years.
+
+
+
+##### **(g)** Use the `predict` function on your pruned tree to get estimated probabilities of opening a cd for everyone in `marketing.test`. Assume a cutoff threshold of 0.25 (i.e. predict "yes" if the estimated probability >= 0.25, otherwise predict "no"). Produce the confusion matrix and compute the **sensitivity** and the **specificity**. Repeat for cutoff thresholds of 0.4 and 0.5.
+
+```{r}
+
+set.seed(1)
+
+#predictions using pruned tree
+predict.tree <- predict(marketing.pruned, newdata = marketing.test, test = "prob")
+
+#cutoff = 0.25
+class.pred1 <- ifelse(predict.tree >= 0.25, "yes", "no")
+
+#cutoff = 0.4
+class.pred2 <- ifelse(predict.tree >= 0.4, "yes", "no")
+
+#cutoff = 0.5
+class.pred3 <- ifelse(predict.tree >= 0.5, "yes", "no")
+
+#3x3 confusion matrix
+#predicted_class <- predict(marketing.pruned, data = marketing)
+
+#confusion.pred4 <- table(marketing.test$y, predicted_class$class)
+#confusion.pred4
+
+#marketing.sensitivity <- sensemakr(model = class.pred1, 
+ #                               treatment = "y",
+  #                              benchmark_covariates = "",
+   #                             kd = 1:3)
+#Source: https://cran.r-project.org/web/packages/sensemakr/vignettes/sensemakr.html
+```
+
+
+
+##### **(h)** Which of the cutoffs considered in part (g) gives the highest sensitivity?  Which gives the highest specificity?  In this marketing problem, do you think we want to have high sensitivity or high specificity?   Explain.
+
+
+
+Your response here
+
+
+
